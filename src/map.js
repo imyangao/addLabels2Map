@@ -123,17 +123,17 @@ class Map {
         
         let sscLayer = new SSCLayer(this.msgbus, {
             'tree_root_file_nm': 'tree.json',
-            'tree_root_href': 'http://127.0.0.1:5000/',
-            'tile_root_href': 'http://127.0.0.1:5000/',
+            'tree_root_href': 'data/',
+            'tile_root_href': 'data/',
         })
         sscLayer.load()
 
         this.renderers = [
             backgroundRenderer,
             // new BackgroundRenderer(this.getWebGLContext(), this.msgbus),
-            new WMTSRenderer(this.getWebGLContext(), this.msgbus, "Actueel_orthoHR", true),
+            // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "Actueel_orthoHR", true),
             // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "brtachtergrondkaart", false),
-            // new SSCRenderer(this.getWebGLContext(), this.msgbus, sscLayer),
+            new SSCRenderer(this.getWebGLContext(), this.msgbus, sscLayer),
             new TextRenderer(this.getWebGLContext(), this.msgbus),
 
 
