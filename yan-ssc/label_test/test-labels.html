@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Label Renderer Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.x/dist/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/rbush@3.0.1/rbush.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+        #canvas-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #label-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block; /* Important for PixiJS */
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+        }
+        .help-text {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
+        .font-controls {
+            margin-left: 20px;
+        }
+        .select-container {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="label-canvas"></canvas>
+    </div>
+
+    <div class="controls">
+        <div class="slider-container">
+            <label for="step-slider">Current Step:</label>
+            <input type="range" id="step-slider" min="0" max="10" value="0" step="0.1">
+            <span id="step-value">0</span>
+        </div>
+        <div class="slider-container">
+            <label for="scale-slider">Scale:</label>
+            <input type="range" id="scale-slider" min="10000" max="100000" value="10000" step="1000">
+            <span id="scale-value">1:10000</span>
+        </div>
+        <div class="font-controls">
+            <div class="slider-container">
+                <label for="font-size">Font Size:</label>
+                <input type="range" id="font-size" min="8" max="24" value="12" step="1">
+                <span id="font-size-value">12</span>
+            </div>
+            <div class="select-container">
+                <label for="font-family">Font Family:</label>
+                <select id="font-family">
+                    <option value="Arial">Arial</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Courier New">Courier New</option>
+                </select>
+            </div>
+            <div class="select-container">
+                <label for="font-weight">Font Weight:</label>
+                <select id="font-weight">
+                    <option value="normal">Normal</option>
+                    <option value="bold">Bold</option>
+                </select>
+            </div>
+            <div class="select-container">
+                <label for="font-style">Font Style:</label>
+                <select id="font-style">
+                    <option value="normal">Normal</option>
+                    <option value="italic">Italic</option>
+                </select>
+            </div>
+            <div class="select-container">
+                <label for="collision-detection">Label Collision:</label>
+                <input type="checkbox" id="collision-detection" checked>
+            </div>
+        </div>
+    </div>
+
+    <div class="help-text">
+        <p>Mouse wheel: Zoom in/out</p>
+        <p>Click and drag: Pan</p>
+        <!-- <p>Double click: Reset view</p> -->
+    </div>
+
+    <script type="module">
+        import { Label, LabelRenderer, ScaleStepAdapter } from './src/labelrenderer.js';
+        import { LabelParser } from './src/labelparser.js';
+        import Rectangle from './src/rect.js';
+
+        // Add metadata for scale-step transformation
+        const metadata = {
+            start_scale_Sb: 10000,  // Base scale (1:10000)
+            no_of_objects_Nb: 12112  // Total number of objects
+        };
+
+        // Create scale-step adapter that matches the one in the renderer
+        const scaleStepAdapter = new ScaleStepAdapter(
+            metadata.start_scale_Sb,
+            metadata.no_of_objects_Nb
+        );
+
+        // Functions that use the adapter
+        function getScaleFromStep(step) {
+            return scaleStepAdapter.get_St_from_step(step);
+        }
+
+        function getStepFromScale(scale) {
+            return scaleStepAdapter.get_step_from_St(scale);
+        }
+
+        console.log('Starting label renderer test...');
+
+        const canvas = document.getElementById('label-canvas');
+        const container = document.getElementById('canvas-container');
+        const stepSlider = document.getElementById('step-slider');
+        const stepValue = document.getElementById('step-value');
+        const scaleSlider = document.getElementById('scale-slider');
+        const scaleValue = document.getElementById('scale-value');
+
+        // Set canvas size to match container size
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        // Initial resize
+        resizeCanvas();
+
+        // Resize on window resize
+        window.addEventListener('resize', resizeCanvas);
+
+        // Create renderer with scale metadata
+        const renderer = new LabelRenderer(canvas, {
+            start_scale_Sb: metadata.start_scale_Sb,
+            no_of_objects_Nb: metadata.no_of_objects_Nb,
+            center2d: [86374.76216448813, 446068.2661266453] // Set the correct map center
+        });
+        console.log('Renderer initialized:', renderer);
+
+        // Create and load labels
+        const labelParser = new LabelParser();
+        let initialVisibleWorld = null;
+        let currentStep = 0;
+
+        labelParser.loadLabels('label_anchors.json')
+            .then(({ labels, stepHighs }) => {
+                // Calculate the bounds of all label positions
+                let minX = Infinity;
+                let minY = Infinity;
+                let maxX = -Infinity;
+                let maxY = -Infinity;
+                let maxStep = 0;
+
+                labels.forEach((labelSteps, id) => {
+                    labelSteps.forEach((label, step) => {
+                        const [x, y] = label.position;
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                        
+                        // Add label to renderer
+                        renderer.addLabel(label);
+                    });
+
+                    // Update max step based on step_high
+                    const stepHigh = stepHighs.get(id);
+                    maxStep = Math.max(maxStep, stepHigh);
+                });
+
+                // Set step highs in the interpolator
+                renderer.interpolator.setStepHighs(stepHighs);
+
+                // Update slider range
+                stepSlider.max = maxStep;
+                stepSlider.value = 0;
+                stepValue.textContent = '0.0';
+                console.log('Max step:', maxStep);
+
+                // Calculate center and dimensions
+                const centerX = (minX + maxX) / 2;
+                const centerY = (minY + maxY) / 2;
+                const width = maxX - minX;
+                const height = maxY - minY;
+
+                // Add some padding around the labels (20% of the dimensions)
+                const paddingX = width * 0.2;
+                const paddingY = height * 0.2;
+
+                // Set up the initial visible world area
+                initialVisibleWorld = new Rectangle(
+                    centerX - (width/2 + paddingX),
+                    centerY - (height/2 + paddingY),
+                    centerX + (width/2 + paddingX),
+                    centerY + (height/2 + paddingY)
+                );
+
+                // Set up the viewport
+                const viewport = new Rectangle(0, 0, canvas.width, canvas.height);
+                renderer.setViewport(viewport);
+                renderer.setVisibleWorld(initialVisibleWorld);
+
+                // Set initial scale on slider and renderer based on initial world/viewport
+                const initialScale = renderer.transform.getScaleDenominator();
+                updateScaleSliderUI(initialScale);
+                const initialStep = getStepFromScale(initialScale);
+                updateStepSliderUI(initialStep);
+                renderer.setStep(initialStep); // Sync renderer step
+
+                // Initial render
+                renderer.render();
+                console.log('Initial render complete');
+            })
+            .catch(error => {
+                console.error('Error loading labels:', error);
+            });
+
+        // Handle mouse wheel zooming
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            
+            // Calculate zoom factor based on wheel delta
+            // Scroll up (deltaY < 0) should zoom in (factor > 1)
+            // Scroll down (deltaY > 0) should zoom out (factor < 1)
+            const zoomFactor = e.deltaY > 0 ? 0.8 : 1.25; // Swapped 1.25 and 0.8
+            
+            // Use the modified renderer.zoom, which returns the new scale and step
+            const { newScale, snappedStep } = renderer.zoom(
+                zoomFactor,
+                e.clientX - canvas.offsetLeft,
+                e.clientY - canvas.offsetTop
+            );
+
+            // Update UI sliders based on the results
+            updateScaleSliderUI(newScale);
+            updateStepSliderUI(snappedStep);
+            // No need to call renderer.setStep here, zoom already does it
+
+            renderer.render();
+        }, { passive: false });
+
+        // Handle panning
+        let isPanning = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        canvas.addEventListener('mousedown', (e) => {
+            isPanning = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            
+            // Use the renderer's pan method
+            renderer.pan(dx, dy); // Note: Y is flipped
+            renderer.render();
+            
+            lastX = e.clientX;
+            lastY = e.clientY;
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isPanning = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isPanning = false;
+        });
+
+        // // Handle double click to reset view
+        // canvas.addEventListener('dblclick', () => {
+        //     if (initialVisibleWorld) {
+        //         // First update the scale to ensure transform is correct
+        //         updateScale(10000);
+                
+        //         // Then set the visible world
+        //         renderer.setVisibleWorld(initialVisibleWorld);
+        //         renderer.render();
+        //     } else {
+        //         // Improved fallback logic when initialVisibleWorld isn't available
+        //         const mapCenter = [86374.76216448813, 446068.2661266453];
+        //         const viewportSize = [canvas.width, canvas.height];
+        //         const scale = 10000; // Base scale 1:10000
+                
+        //         // Use a more reliable calculation for world dimensions
+        //         const pixelsToMeters = 1 / renderer.getPixelsPerMeter();
+        //         const halfWidthWorld = (viewportSize[0] * pixelsToMeters * scale) / 2;
+        //         const halfHeightWorld = (viewportSize[1] * pixelsToMeters * scale) / 2;
+                
+        //         const visibleWorld = new Rectangle(
+        //             mapCenter[0] - halfWidthWorld,
+        //             mapCenter[1] - halfHeightWorld,
+        //             mapCenter[0] + halfWidthWorld, 
+        //             mapCenter[1] + halfHeightWorld
+        //         );
+                
+        //         // First update scale
+        //         updateScale(10000);
+                
+        //         // Then set visible world
+        //         renderer.setVisibleWorld(visibleWorld);
+        //         renderer.render();
+        //     }
+            
+        //     // Force a refresh of step and scale values
+        //     renderer.setStep(0);
+        //     stepSlider.value = 0;
+        //     stepValue.textContent = "0";
+        // });
+
+        // Handle step updates
+        function updateStepSliderUI(step) {
+            const maxStep = parseFloat(stepSlider.max);
+            step = Math.max(0, Math.min(step, maxStep)); // Clamp step
+            stepSlider.value = step;
+            stepValue.textContent = step.toFixed(1);
+        }
+
+        function updateScaleSliderUI(scale) {
+            const minScale = parseFloat(scaleSlider.min);
+            const maxScale = parseFloat(scaleSlider.max);
+            scale = Math.max(minScale, Math.min(scale, maxScale)); // Clamp scale
+            scaleSlider.value = scale;
+            scaleValue.textContent = `1:${Math.round(scale)}`;
+        }
+
+        stepSlider.addEventListener('input', (e) => {
+            const step = parseFloat(e.target.value);
+            updateStepSliderUI(step); // Update step display
+
+            // Calculate the target scale for this step
+            const targetScale = getScaleFromStep(step);
+
+            if (targetScale !== Infinity && targetScale > 0) {
+                // Update the renderer's scale (which also updates its step)
+                renderer.setScale(targetScale);
+                // Update the scale slider UI to match
+                updateScaleSliderUI(targetScale);
+            } else {
+                // If scale is invalid (e.g., step is too high),
+                // just set the renderer step directly without changing scale
+                renderer.setStep(step);
+            }
+            renderer.render();
+        });
+
+        // Handle scale slider input (MODIFIED)
+        scaleSlider.addEventListener('input', (e) => {
+            const scale = parseFloat(e.target.value);
+            console.log(`[test-labels.html] Scale slider input: ${scale}`); // Log slider value
+            updateScaleSliderUI(scale); // Update scale display
+
+            // Update the renderer's scale (this also updates the step internally)
+            renderer.setScale(scale);
+
+            // Update the step slider UI based on the step calculated inside setScale
+            updateStepSliderUI(renderer.currentStep);
+
+            renderer.render();
+        });
+
+        // Font control elements
+        const fontSizeSlider = document.getElementById('font-size');
+        const fontSizeValue = document.getElementById('font-size-value');
+        const fontFamilySelect = document.getElementById('font-family');
+        const fontWeightSelect = document.getElementById('font-weight');
+        const fontStyleSelect = document.getElementById('font-style');
+
+        // Update font when controls change
+        function updateFont() {
+            renderer.setFont(
+                fontFamilySelect.value,
+                parseInt(fontSizeSlider.value),
+                fontWeightSelect.value,
+                fontStyleSelect.value
+            );
+            renderer.render();
+        }
+
+        fontSizeSlider.addEventListener('input', (e) => {
+            fontSizeValue.textContent = e.target.value;
+            updateFont();
+        });
+
+        fontFamilySelect.addEventListener('change', updateFont);
+        fontWeightSelect.addEventListener('change', updateFont);
+        fontStyleSelect.addEventListener('change', updateFont);
+
+        // Add collision detection checkbox handler
+        const collisionCheckbox = document.getElementById('collision-detection');
+        collisionCheckbox.addEventListener('change', (e) => {
+            renderer.setCollisionDetection(e.target.checked);
+        });
+    </script>
+</body>
+</html> 

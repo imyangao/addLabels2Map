@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 "use strict";
 
 // const bindHandler = require('./handler');
@@ -15,7 +16,8 @@ import { Renderer } from "./render";
 import { doFlyTo } from './fly'
 
 import { WMTSRenderer } from './wmts';
-import { TextRenderer } from './text';
+// import { TextRenderer } from './text';
+import PixiLabelRenderer from './pixi-label-renderer.js';
 
 import { BackgroundRenderer } from './background';
 
@@ -134,7 +136,7 @@ class Map {
             // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "Actueel_orthoHR", true),
             // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "brtachtergrondkaart", false),
             new SSCRenderer(this.getWebGLContext(), this.msgbus, sscLayer),
-            new TextRenderer(this.getWebGLContext(), this.msgbus),
+            new PixiLabelRenderer(this, this.msgbus, { labelUrl: 'label_test/label_anchors.json' }),
 
 
         ]
