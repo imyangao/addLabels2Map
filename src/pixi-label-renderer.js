@@ -238,6 +238,17 @@ export default class PixiLabelRenderer {
             this.interpolator = new LabelInterpolator();
             this.rbush = new RBush();
             this.currentStep = 0;
+            
+            // Keep a reference to an SSCLayer (if available) for direct step calculation later
+            this.sscLayer = null;
+            
+            // Subscribe to step updates published by the map so that labels share the same step value
+            this.msgbus.subscribe('map.step', (_topic, step) => {
+                // Ensure the step value never goes below 0
+                this.currentStep = Math.max(0, step);
+            });
+            
+            // Enable or disable collision detection
             this.collisionDetectionEnabled = true;
 
             // Load label data (if provided) asynchronously
@@ -392,6 +403,10 @@ export default class PixiLabelRenderer {
 
         // First pass: calculate bounds and sort by priority
         const labelBounds = this._labelSprites
+            // Only consider sprites that are currently visible (active); this prevents
+            // labels that should be hidden (e.g. past their step_high) from re-appearing
+            // due to the collision-resolution logic.
+            .filter(({ sprite }) => sprite.visible)
             .map(({ label, sprite }) => {
                 const bounds = this._getLabelBounds(sprite, sprite.x, sprite.y);
                 return {
@@ -472,8 +487,24 @@ export default class PixiLabelRenderer {
             return; // labels not loaded yet
         }
 
-        // Update current step based on scale
-        this.currentStep = Math.log2(scaleDenominator);
+        // ---- Synchronise currentStep with the map ----
+        // Try to reuse the SSCLayer's step calculation when available. This keeps
+        // label behaviour consistent with the map rendering logic.
+        if (this.sscLayer === null && this.map && Array.isArray(this.map.renderers)) {
+            const rendererWithLayer = this.map.renderers.find(r => r.layer && typeof r.layer.getStepFromDenominator === 'function');
+            if (rendererWithLayer) {
+                this.sscLayer = rendererWithLayer.layer;
+            }
+        }
+
+        if (this.sscLayer && typeof this.sscLayer.getStepFromDenominator === 'function') {
+            this.currentStep = Math.max(0, this.sscLayer.getStepFromDenominator(scaleDenominator));
+        }
+
+        // Fallback: if we still do not have a valid step, estimate with log2 but clamp to 0
+        if (this.currentStep === undefined || this.currentStep === null) {
+            this.currentStep = Math.max(0, Math.floor(Math.log2(scaleDenominator)));
+        }
 
         // Fetch the up-to-date world→viewport matrix from the map
         const mat = this.map.getTransform().worldViewportMatrix;
