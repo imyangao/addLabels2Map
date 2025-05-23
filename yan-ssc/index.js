@@ -1832,11 +1832,146 @@
      *      <script src="https://pixijs.download/release/pixi.min.js"></script>
      *  to the HTML page that creates the map.
      */
-    // ────────────────────────────────────────────────────────────────────────────
-    var Label = function Label(id, text, position) {
-        this.id   = id;
+
+    // Check for RBush (needed for collision detection)
+    var RBush = window.RBush;
+    if (!RBush) {
+        console.error("RBush library not found. Make sure it's loaded correctly via CDN script tag.");
+    }
+
+    // Label class with interpolation support
+    var Label = function Label(id, text, position, rotation, opacity, step, fits) {
+        if ( rotation === void 0 ) rotation = 0;
+        if ( opacity === void 0 ) opacity = 1.0;
+        if ( step === void 0 ) step = 0;
+        if ( fits === void 0 ) fits = false;
+
+        this.id = id;
         this.text = text;
-        this.pos  = position; // [x, y] in *world* coordinates
+        this.pos = position;  // [x, y] in world coordinates
+        this.rotation = rotation;
+        this.opacity = opacity;
+        this.step = step;
+        this.fits = fits;
+    };
+
+    // Label interpolator class
+    var LabelInterpolator = function LabelInterpolator() {
+        this.labels = new Map();  // Store labels by ID
+        this.keySteps = new Set();  // Store all key steps
+        this.stepHighs = new Map();  // Store step_high for each label
+    };
+
+    LabelInterpolator.prototype.setStepHighs = function setStepHighs (stepHighs) {
+        this.stepHighs = stepHighs;
+    };
+
+    LabelInterpolator.prototype.addLabel = function addLabel (label) {
+        if (!this.labels.has(label.id)) {
+            this.labels.set(label.id, new Map());
+        }
+        this.labels.get(label.id).set(label.step, label);
+        this.keySteps.add(label.step);
+    };
+
+    LabelInterpolator.prototype.interpolatePosition = function interpolatePosition (start, end, factor) {
+        return [
+            start[0] + (end[0] - start[0]) * factor,
+            start[1] + (end[1] - start[1]) * factor
+        ];
+    };
+
+    LabelInterpolator.prototype.interpolateRotation = function interpolateRotation (start, end, factor) {
+        // Ensure angles are between 0 and 360
+        start = ((start % 360) + 360) % 360;
+        end = ((end % 360) + 360) % 360;
+
+        // Find shortest path
+        var diff = end - start;
+        if (diff > 180) { diff -= 360; }
+        if (diff < -180) { diff += 360; }
+
+        return start + diff * factor;
+    };
+
+    LabelInterpolator.prototype.getInterpolatedLabel = function getInterpolatedLabel (id, currentStep) {
+        var labelSteps = this.labels.get(id);
+        if (!labelSteps || labelSteps.size === 0) { return null; }
+
+        var stepHigh = this.stepHighs.get(id) || Infinity;
+        var steps = Array.from(labelSteps.keys()).sort(function (a, b) { return a - b; });
+        var firstStep = steps[0];
+        var lastStep = steps[steps.length - 1];
+
+        // Find surrounding key steps
+        var prevStep = firstStep;
+        var nextStep = firstStep;
+        for (var i = 0; i < steps.length; i++) {
+            if (steps[i] <= currentStep) { prevStep = steps[i]; }
+            if (steps[i] >= currentStep) {
+                nextStep = steps[i];
+                break;
+            }
+        }
+
+        var prevLabel = labelSteps.get(prevStep);
+
+        // At exact key step
+        if (currentStep === prevStep && currentStep < stepHigh) {
+            return new Label(
+                prevLabel.id,
+                prevLabel.text,
+                prevLabel.pos,
+                prevLabel.rotation,
+                1.0,
+                currentStep,
+                prevLabel.fits
+            );
+        }
+
+        // Fade-out
+        if (currentStep > lastStep && currentStep < stepHigh) {
+            var denominator = stepHigh - lastStep;
+            if (denominator <= 0) { return null; }
+
+            var fadeFactor = 1 - ((currentStep - lastStep) / denominator);
+            var lastLabel = labelSteps.get(lastStep);
+            return new Label(
+                lastLabel.id,
+                lastLabel.text,
+                lastLabel.pos,
+                lastLabel.rotation,
+                Math.max(0, fadeFactor),
+                currentStep,
+                lastLabel.fits
+            );
+        }
+
+        // Past stepHigh
+        if (currentStep >= stepHigh) { return null; }
+
+        // Interpolation between steps
+        if (prevStep !== nextStep) {
+            var nextLabel = labelSteps.get(nextStep);
+            var denom = nextStep - prevStep;
+            if (denom === 0) { return prevLabel; }
+
+            var factor = (currentStep - prevStep) / denom;
+            var pos = this.interpolatePosition(prevLabel.pos, nextLabel.pos, factor);
+            var rotation = this.interpolateRotation(prevLabel.rotation, nextLabel.rotation, factor);
+
+            return new Label(
+                prevLabel.id,
+                prevLabel.text,
+                pos,
+                rotation,
+                1.0,
+                currentStep,
+                prevLabel.fits
+            );
+        }
+
+        return prevLabel;
     };
 
     var PixiLabelRenderer = function PixiLabelRenderer(map, msgbus, opts) {
@@ -1906,6 +2041,12 @@
             this.container = new window.PIXI.Container();
             this.app.stage.addChild(this.container);
 
+            // Initialize interpolator and collision detection
+            this.interpolator = new LabelInterpolator();
+            this.rbush = new RBush();
+            this.currentStep = 0;
+            this.collisionDetectionEnabled = true;
+
             // Load label data (if provided) asynchronously
             if (opts.labelUrl) {
                 console.log('Starting to load labels from:', opts.labelUrl);
@@ -1935,47 +2076,48 @@
         console.log('Loading label data from:', url);
         fetch(url)
             .then(function (response) {
-                console.log('Fetch response status:', response.status);
                 if (!response.ok) {
                     throw new Error(("HTTP error! status: " + (response.status)));
                 }
-                return response.text().then(function (text) {
-                    console.log('Raw response:', text);
-                    try {
-                        return JSON.parse(text);
-                    } catch (e) {
-                        console.error('Failed to parse JSON:', e);
-                        throw e;
-                    }
-                });
+                return response.json();
             })
             .then(function (data) {
                 console.log('Received label data:', data);
                 if (!Array.isArray(data)) {
                     throw new Error('Label data must be an array');
                 }
+
+                // Process labels and store step_high values
                 this$1._labels = data.map(function (rec) {
                     if (!rec.name || !rec.anchor_geom || !rec.anchor_geom.coordinates) {
                         console.warn('Invalid label record:', rec);
                         return null;
                     }
-                    return new Label(
+
+                    var label = new Label(
                         (rec.label_trace_id !== undefined ? rec.label_trace_id : rec.id),
                         rec.name,
-                        rec.anchor_geom.coordinates
+                        rec.anchor_geom.coordinates,
+                        rec.angle || 0,
+                        1.0,
+                        rec.step_value || 0,
+                        rec.fits || false
                     );
+
+                    // Add to interpolator
+                    this$1.interpolator.addLabel(label);
+                    if (rec.step_high !== undefined) {
+                        this$1.interpolator.stepHighs.set(label.id, rec.step_high);
+                    }
+
+                    return label;
                 }).filter(function (label) { return label !== null; });
 
                 console.log('Created', this$1._labels.length, 'valid labels');
-                if (this$1._labels.length === 0) {
-                    console.warn('No valid labels were created from the data');
-                }
-                // Build sprites once the JSON arrives
                 this$1._buildSprites();
             })
             .catch(function (err) {
                 console.error('PixiLabelRenderer – failed to load labels:', err);
-                console.error('Error details:', err.message);
                 this$1._labels = [];
             });
     };
@@ -1986,14 +2128,12 @@
             return;
         }
             
-        console.log('Building sprites for', this._labels.length, 'labels');
-            
         var style = new window.PIXI.TextStyle({
             fontFamily: 'Arial',
-            fontSize:   24, // Increased font size
-            fill:   0xFF0000, // Bright red color
-            align:  'center',
-            stroke: 0xFFFFFF, // White outline
+            fontSize: 24,
+            fill: 0xFF0000,
+            align: 'center',
+            stroke: 0xFFFFFF,
             strokeThickness: 2,
             dropShadow: true,
             dropShadowColor: '#000000',
@@ -2001,15 +2141,124 @@
             dropShadowDistance: 2
         });
 
+        this._labelSprites = [];
         for (var i = 0, list = this._labels; i < list.length; i += 1) {
             var lbl = list[i];
 
-                var txt = new window.PIXI.Text(lbl.text, style);
+                var container = new window.PIXI.Container();
+            var txt = new window.PIXI.Text(lbl.text, style);
             txt.anchor.set(0.5);
-            this.container.addChild(txt);
-            this._labelSprites.push({ label: lbl, sprite: txt });
-            console.log('Created sprite for label:', lbl.text, 'at position:', lbl.pos);
+            container.addChild(txt);
+                
+            this.container.addChild(container);
+            this._labelSprites.push({ 
+                label: lbl, 
+                sprite: container,
+                bounds: null  // Will store screen-space bounds for collision detection
+            });
         }
+    };
+
+    PixiLabelRenderer.prototype._getLabelBounds = function _getLabelBounds (sprite, screenX, screenY) {
+        var bounds = sprite.getLocalBounds();
+        var padding = 4; // Add some padding between labels
+            
+        // Get the sprite's rotation in radians
+        var angleRad = sprite.rotation;
+        var cosA = Math.cos(angleRad);
+        var sinA = Math.sin(angleRad);
+            
+        // Calculate corners of the unrotated box relative to center (with padding)
+        var corners = [
+            [-bounds.width/2 - padding, -bounds.height/2 - padding],
+            [bounds.width/2 + padding, -bounds.height/2 - padding],
+            [bounds.width/2 + padding, bounds.height/2 + padding],
+            [-bounds.width/2 - padding, bounds.height/2 + padding]
+        ];
+            
+        // Rotate corners and find min/max X and Y
+        var minX = Infinity, minY = Infinity;
+        var maxX = -Infinity, maxY = -Infinity;
+            
+        corners.forEach(function (ref) {
+                var x = ref[0];
+                var y = ref[1];
+
+            // Rotate the corner
+            var rotatedX = x * cosA - y * sinA;
+            var rotatedY = x * sinA + y * cosA;
+                
+            // Translate to screen coordinates
+            var worldX = screenX + rotatedX;
+            var worldY = screenY + rotatedY;
+                
+            minX = Math.min(minX, worldX);
+            minY = Math.min(minY, worldY);
+            maxX = Math.max(maxX, worldX);
+            maxY = Math.max(maxY, worldY);
+        });
+            
+        return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+    };
+
+    PixiLabelRenderer.prototype._resolveCollisions = function _resolveCollisions () {
+            var this$1 = this;
+
+        // Clear existing tree
+        this.rbush.clear();
+
+        // First pass: calculate bounds and sort by priority
+        var labelBounds = this._labelSprites
+            .map(function (ref) {
+                    var label = ref.label;
+                    var sprite = ref.sprite;
+
+                var bounds = this$1._getLabelBounds(sprite, sprite.x, sprite.y);
+                return {
+                    id: label.id,
+                    minX: bounds.minX,
+                    minY: bounds.minY,
+                    maxX: bounds.maxX,
+                    maxY: bounds.maxY,
+                    label: label,
+                    sprite: sprite,
+                    // Get step_high from interpolator, default to Infinity if not found
+                    stepHigh: this$1.interpolator.stepHighs.get(label.id) || Infinity,
+                    // Use text length as secondary priority (shorter names preferred)
+                    textLength: label.text.length
+                };
+            })
+            .sort(function (a, b) {
+                // Sort by step_high (higher values first)
+                if (a.stepHigh !== b.stepHigh) {
+                    return b.stepHigh - a.stepHigh;
+                }
+                // If same step_high, prefer shorter text
+                return a.textLength - b.textLength;
+            });
+
+        // Second pass: detect and resolve collisions with priority
+        labelBounds.forEach(function (item) {
+            // Search for collisions, excluding the current item
+            var searchBounds = {
+                minX: item.minX,
+                minY: item.minY,
+                maxX: item.maxX,
+                maxY: item.maxY
+            };
+                
+            var collisions = this$1.rbush.search(searchBounds)
+                .filter(function (other) { return other.id !== item.id; }); // Exclude self from collision check
+
+            if (collisions.length === 0) {
+                // No collision, add to tree and show label
+                this$1.rbush.insert(item);
+                item.sprite.visible = true;
+            } else {
+                // Collision detected, hide this label
+                item.sprite.visible = false;
+            }
+        });
     };
 
     // ── Public API expected by Map ─────────────────────────────────────
@@ -2038,12 +2287,15 @@
 
     /** Update is called by Map each animation frame. */
     /* eslint-disable-next-line no-unused-vars */
-    PixiLabelRenderer.prototype.update = function update (_rectIgnored, _scaleIgnored, _matrixIgnored) {
+    PixiLabelRenderer.prototype.update = function update (_rectIgnored, scaleDenominator, _matrixIgnored) {
             var this$1 = this;
 
         if (!this._labelSprites || this._labelSprites.length === 0) {
             return; // labels not loaded yet
         }
+
+        // Update current step based on scale
+        this.currentStep = Math.log2(scaleDenominator);
 
         // Fetch the up-to-date world→viewport matrix from the map
         var mat = this.map.getTransform().worldViewportMatrix;
@@ -2052,25 +2304,41 @@
             return;
         }
 
-        // Log transform details
-        console.log('Transform details:', {
-            scale: this.map.getTransform().getScaleDenominator(),
-            matrix: mat,
-            viewport: [this.app.renderer.width, this.app.renderer.height],
-            container: [this.app.view.width, this.app.view.height]
-        });
-
-        // Position each sprite
+        // Position each sprite and update interpolated states
         this._labelSprites.forEach(function (ref) {
                 var label = ref.label;
                 var sprite = ref.sprite;
 
+            // Get interpolated label state
+            var interpolated = this$1.interpolator.getInterpolatedLabel(label.id, this$1.currentStep);
+            if (!interpolated) {
+                sprite.visible = false;
+                return;
+            }
+
+            // Transform world coordinates to screen coordinates
             var out = new Float64Array(3);
-            vec3transform(out, [label.pos[0], label.pos[1], 0], mat);
+            vec3transform(out, [interpolated.pos[0], interpolated.pos[1], 0], mat);
                 
+            // Update sprite properties
             sprite.x = out[0];
             sprite.y = this$1.app.renderer.height - out[1];
+                
+            // Calculate rotation considering transform matrix
+            // Extract rotation from transform matrix (assuming uniform scale)
+            var matrixRotation = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
+            // Combine matrix rotation with label rotation and convert to clockwise
+            sprite.rotation = (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
+            sprite.alpha = interpolated.opacity;
+
+            // Initially make visible (collision detection may hide it)
+            sprite.visible = true;
         });
+
+        // Perform collision detection if enabled
+        if (this.collisionDetectionEnabled) {
+            this._resolveCollisions();
+        }
 
         // Make sure the container is visible
         this.container.visible = true;
@@ -2078,6 +2346,10 @@
 
         // Finally let PIXI render
         this.app.renderer.render(this.app.stage);
+    };
+
+    PixiLabelRenderer.prototype.setCollisionDetection = function setCollisionDetection (enabled) {
+        this.collisionDetectionEnabled = enabled;
     };
 
     var DrawProgram$1 = function DrawProgram(gl, vertexShaderText, fragmentShaderText) {
