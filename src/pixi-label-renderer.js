@@ -1,11 +1,7 @@
 /*
- *  PIXI based Label renderer – minimal version
- *  ------------------------------------------------------
  *  This renderer draws map labels on a transparent canvas that is
- *  stacked above the WebGL canvas used by the rest of the map.  It
- *  keeps that canvas perfectly in sync with the map's pan/zoom by
- *  reading the single-step world→viewport matrix that Map already
- *  maintains.
+ *  stacked above the canvas used by the rest of the map.  It
+ *  keeps that canvas in sync with the map's pan/zoom.
  *
  *  Usage (from src/map.js):
  *      import PixiLabelRenderer from './pixi-label-renderer.js';
@@ -20,8 +16,7 @@
  *  to the HTML page that creates the map.
  */
 
-// We rely on the lightweight math helpers that already exist in the
-// codebase.
+
 import { vec3transform } from './mat4.js';
 
 // Check for RBush (needed for collision detection)
@@ -32,14 +27,13 @@ if (!RBush) {
 
 // Label class with interpolation support
 class Label {
-    constructor(id, text, position, rotation = 0, opacity = 1.0, step = 0, fits = false) {
+    constructor(id, text, position, rotation = 0, opacity = 1.0, step = 0) {
         this.id = id;
         this.text = text;
         this.pos = position;  // [x, y] in world coordinates
         this.rotation = rotation;
         this.opacity = opacity;
-        this.step = step;
-        this.fits = fits;
+        this.step = step
     }
 }
 
@@ -113,8 +107,7 @@ class LabelInterpolator {
                 prevLabel.pos,
                 prevLabel.rotation,
                 1.0,
-                currentStep,
-                prevLabel.fits
+                currentStep
             );
         }
 
@@ -131,8 +124,7 @@ class LabelInterpolator {
                 lastLabel.pos,
                 lastLabel.rotation,
                 Math.max(0, fadeFactor),
-                currentStep,
-                lastLabel.fits
+                currentStep
             );
         }
 
@@ -155,8 +147,7 @@ class LabelInterpolator {
                 pos,
                 rotation,
                 1.0,
-                currentStep,
-                prevLabel.fits
+                currentStep
             );
         }
 
@@ -171,12 +162,12 @@ export default class PixiLabelRenderer {
      *  @param {object} opts   { labelUrl : string }
      */
     constructor(map, msgbus, opts = {}) {
-        // Check for PIXI and its version
+        // Check for PIXI
         if (!window.PIXI) {
             throw new Error('PixiLabelRenderer: window.PIXI not found. Make sure the pixi.js script is loaded.');
         }
 
-        // Verify PIXI version and required components
+
         if (!window.PIXI.Application || !window.PIXI.Container || !window.PIXI.Text) {
             throw new Error('PixiLabelRenderer: Incomplete PIXI.js installation. Make sure you are using a complete version of PIXI.js');
         }
@@ -184,11 +175,11 @@ export default class PixiLabelRenderer {
         this.map    = map;
         this.msgbus = msgbus;
         this.opts   = opts;
-        this._labelSprites = []; // Initialize early to prevent undefined errors
+        this._labelSprites = [];
 
-        console.log('PixiLabelRenderer options:', opts); // Log the options
+        // console.log('PixiLabelRenderer options:', opts); // Log the options
 
-        // ── 1. Create an overlay PIXI application ─────────────────────────
+        // 1. Create an overlay PIXI application
         const baseCanvas = map.getCanvasContainer();
         if (!baseCanvas || !baseCanvas.parentNode) {
             throw new Error('PixiLabelRenderer: Invalid canvas container');
@@ -201,13 +192,13 @@ export default class PixiLabelRenderer {
             tempCanvas.width = parent.clientWidth;
             tempCanvas.height = parent.clientHeight;
 
-            // Initialize PIXI with explicit options
+            // Initialize PIXI
             this.app = new window.PIXI.Application({
                 view: tempCanvas,
                 backgroundAlpha: 0,
                 antialias: true,
-                resolution: 1,  // Force 1:1 pixel ratio
-                autoDensity: false,  // Disable auto density
+                resolution: 1,
+                autoDensity: false,
                 width: parent.clientWidth,
                 height: parent.clientHeight
             });
@@ -216,7 +207,7 @@ export default class PixiLabelRenderer {
                 throw new Error('PixiLabelRenderer: Failed to create PIXI Application');
             }
 
-            // Style the overlay so it sits exactly on top of the WebGL canvas
+            // Style the overlay so it sits exactly on top of the map canvas
             Object.assign(this.app.view.style, {
                 position:        'absolute',
                 left:            '0',
@@ -230,7 +221,7 @@ export default class PixiLabelRenderer {
             // Insert *after* the base canvas so it is rendered on top
             parent.appendChild(this.app.view);
 
-            // Container that we'll transform instead of individual sprites
+            // Container that will be transformed instead of individual sprites
             this.container = new window.PIXI.Container();
             this.app.stage.addChild(this.container);
 
@@ -239,7 +230,7 @@ export default class PixiLabelRenderer {
             this.rbush = new RBush();
             this.currentStep = 0;
             
-            // Keep a reference to an SSCLayer (if available) for direct step calculation later
+            // Keep a reference to an SSCLayer (if available) for step calculation later
             this.sscLayer = null;
             
             // Subscribe to step updates published by the map so that labels share the same step value
@@ -301,8 +292,7 @@ export default class PixiLabelRenderer {
                         rec.anchor_geom.coordinates,
                         rec.angle || 0,
                         1.0,
-                        rec.step_value || 0,
-                        rec.fits || false
+                        rec.step_value || 0
                     );
 
                     // Add to interpolator
@@ -314,11 +304,11 @@ export default class PixiLabelRenderer {
                     return label;
                 }).filter(label => label !== null);
 
-                console.log('Created', this._labels.length, 'valid labels');
+                // console.log('Created', this._labels.length, 'valid labels');
                 this._buildSprites();
             })
             .catch((err) => {
-                console.error('PixiLabelRenderer – failed to load labels:', err);
+                console.error('PixiLabelRenderer failed to load labels:', err);
                 this._labels = [];
             });
     }
@@ -331,15 +321,15 @@ export default class PixiLabelRenderer {
         
         const style = new window.PIXI.TextStyle({
             fontFamily: 'Arial',
-            fontSize: 24,
-            fill: 0xFF0000,
+            fontSize: 16,
+            fill: 0x000000,
             align: 'center',
             stroke: 0xFFFFFF,
-            strokeThickness: 2,
-            dropShadow: true,
-            dropShadowColor: '#000000',
-            dropShadowBlur: 4,
-            dropShadowDistance: 2
+            strokeThickness: 1
+            // dropShadow: true,
+            // dropShadowColor: '#000000',
+            // dropShadowBlur: 4,
+            // dropShadowDistance: 2
         });
 
         this._labelSprites = [];
@@ -360,9 +350,8 @@ export default class PixiLabelRenderer {
 
     _getLabelBounds(sprite, screenX, screenY) {
         const bounds = sprite.getLocalBounds();
-        const padding = 4; // Add some padding between labels
+        const padding = 2; 
         
-        // Get the sprite's rotation in radians
         const angleRad = sprite.rotation;
         const cosA = Math.cos(angleRad);
         const sinA = Math.sin(angleRad);
@@ -403,9 +392,7 @@ export default class PixiLabelRenderer {
 
         // First pass: calculate bounds and sort by priority
         const labelBounds = this._labelSprites
-            // Only consider sprites that are currently visible (active); this prevents
-            // labels that should be hidden (e.g. past their step_high) from re-appearing
-            // due to the collision-resolution logic.
+            // Only consider sprites that are currently visible
             .filter(({ sprite }) => sprite.visible)
             .map(({ label, sprite }) => {
                 const bounds = this._getLabelBounds(sprite, sprite.x, sprite.y);
@@ -417,9 +404,9 @@ export default class PixiLabelRenderer {
                     maxY: bounds.maxY,
                     label,
                     sprite,
-                    // Get step_high from interpolator, default to Infinity if not found
+                    // Get step_high from interpolator
                     stepHigh: this.interpolator.stepHighs.get(label.id) || Infinity,
-                    // Use text length as secondary priority (shorter names preferred)
+                    // Use text length as secondary priority
                     textLength: label.text.length
                 };
             })
@@ -434,7 +421,7 @@ export default class PixiLabelRenderer {
 
         // Second pass: detect and resolve collisions with priority
         labelBounds.forEach((item) => {
-            // Search for collisions, excluding the current item
+            // Search for collisions
             const searchBounds = {
                 minX: item.minX,
                 minY: item.minY,
@@ -442,8 +429,8 @@ export default class PixiLabelRenderer {
                 maxY: item.maxY
             };
             
-            const collisions = this.rbush.search(searchBounds)
-                .filter(other => other.id !== item.id); // Exclude self from collision check
+            const collisions = this.rbush.search(searchBounds);
+                // .filter(other => other.id !== item.id); 
 
             if (collisions.length === 0) {
                 // No collision, add to tree and show label
@@ -456,12 +443,12 @@ export default class PixiLabelRenderer {
         });
     }
 
-    // ── Public API expected by Map ─────────────────────────────────────
+
     setViewport(w, h) {
         // Update both the renderer size and the canvas size
         this.app.renderer.resize(w, h);
         
-        // Ensure the canvas size matches exactly
+        // Ensure the canvas size matches
         this.app.view.width = w;
         this.app.view.height = h;
         
@@ -487,9 +474,8 @@ export default class PixiLabelRenderer {
             return; // labels not loaded yet
         }
 
-        // ---- Synchronise currentStep with the map ----
-        // Try to reuse the SSCLayer's step calculation when available. This keeps
-        // label behaviour consistent with the map rendering logic.
+        // Synchronise currentStep with the map
+        // Try to reuse the SSCLayer's step calculation when available. This keeps label behaviour consistent with the map rendering logic.
         if (this.sscLayer === null && this.map && Array.isArray(this.map.renderers)) {
             const rendererWithLayer = this.map.renderers.find(r => r.layer && typeof r.layer.getStepFromDenominator === 'function');
             if (rendererWithLayer) {
@@ -501,12 +487,9 @@ export default class PixiLabelRenderer {
             this.currentStep = Math.max(0, this.sscLayer.getStepFromDenominator(scaleDenominator));
         }
 
-        // Fallback: if we still do not have a valid step, estimate with log2 but clamp to 0
-        if (this.currentStep === undefined || this.currentStep === null) {
-            this.currentStep = Math.max(0, Math.floor(Math.log2(scaleDenominator)));
-        }
 
-        // Fetch the up-to-date world→viewport matrix from the map
+
+        // Fetch the up-to-date world->viewport matrix from the map
         const mat = this.map.getTransform().worldViewportMatrix;
         if (!mat) {
             console.warn('PixiLabelRenderer: No transform matrix available');
@@ -530,14 +513,13 @@ export default class PixiLabelRenderer {
             sprite.x = out[0];
             sprite.y = this.app.renderer.height - out[1];
             
-            // Calculate rotation considering transform matrix
-            // Extract rotation from transform matrix (assuming uniform scale)
+            // Calculate rotation
             const matrixRotation = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
-            // Combine matrix rotation with label rotation and convert to clockwise
+
             sprite.rotation = (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
             sprite.alpha = interpolated.opacity;
 
-            // Initially make visible (collision detection may hide it)
+            // Initially make visible
             sprite.visible = true;
         });
 

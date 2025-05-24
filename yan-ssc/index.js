@@ -1812,13 +1812,9 @@
     //test()
 
     /*
-     *  PIXI based Label renderer – minimal version
-     *  ------------------------------------------------------
      *  This renderer draws map labels on a transparent canvas that is
-     *  stacked above the WebGL canvas used by the rest of the map.  It
-     *  keeps that canvas perfectly in sync with the map's pan/zoom by
-     *  reading the single-step world→viewport matrix that Map already
-     *  maintains.
+     *  stacked above the canvas used by the rest of the map.  It
+     *  keeps that canvas in sync with the map's pan/zoom.
      *
      *  Usage (from src/map.js):
      *      import PixiLabelRenderer from './pixi-label-renderer.js';
@@ -1840,11 +1836,10 @@
     }
 
     // Label class with interpolation support
-    var Label = function Label(id, text, position, rotation, opacity, step, fits) {
+    var Label = function Label(id, text, position, rotation, opacity, step) {
         if ( rotation === void 0 ) rotation = 0;
         if ( opacity === void 0 ) opacity = 1.0;
         if ( step === void 0 ) step = 0;
-        if ( fits === void 0 ) fits = false;
 
         this.id = id;
         this.text = text;
@@ -1852,7 +1847,6 @@
         this.rotation = rotation;
         this.opacity = opacity;
         this.step = step;
-        this.fits = fits;
     };
 
     // Label interpolator class
@@ -1924,8 +1918,7 @@
                 prevLabel.pos,
                 prevLabel.rotation,
                 1.0,
-                currentStep,
-                prevLabel.fits
+                currentStep
             );
         }
 
@@ -1942,8 +1935,7 @@
                 lastLabel.pos,
                 lastLabel.rotation,
                 Math.max(0, fadeFactor),
-                currentStep,
-                lastLabel.fits
+                currentStep
             );
         }
 
@@ -1966,8 +1958,7 @@
                 pos,
                 rotation,
                 1.0,
-                currentStep,
-                prevLabel.fits
+                currentStep
             );
         }
 
@@ -1978,12 +1969,12 @@
         var this$1 = this;
         if ( opts === void 0 ) opts = {};
 
-        // Check for PIXI and its version
+        // Check for PIXI
         if (!window.PIXI) {
             throw new Error('PixiLabelRenderer: window.PIXI not found. Make sure the pixi.js script is loaded.');
         }
 
-        // Verify PIXI version and required components
+
         if (!window.PIXI.Application || !window.PIXI.Container || !window.PIXI.Text) {
             throw new Error('PixiLabelRenderer: Incomplete PIXI.js installation. Make sure you are using a complete version of PIXI.js');
         }
@@ -1991,11 +1982,11 @@
         this.map= map;
         this.msgbus = msgbus;
         this.opts   = opts;
-        this._labelSprites = []; // Initialize early to prevent undefined errors
+        this._labelSprites = [];
 
-        console.log('PixiLabelRenderer options:', opts); // Log the options
+        // console.log('PixiLabelRenderer options:', opts); // Log the options
 
-        // ── 1. Create an overlay PIXI application ─────────────────────────
+        // 1. Create an overlay PIXI application
         var baseCanvas = map.getCanvasContainer();
         if (!baseCanvas || !baseCanvas.parentNode) {
             throw new Error('PixiLabelRenderer: Invalid canvas container');
@@ -2008,13 +1999,13 @@
             tempCanvas.width = parent.clientWidth;
             tempCanvas.height = parent.clientHeight;
 
-            // Initialize PIXI with explicit options
+            // Initialize PIXI
             this.app = new window.PIXI.Application({
                 view: tempCanvas,
                 backgroundAlpha: 0,
                 antialias: true,
-                resolution: 1,  // Force 1:1 pixel ratio
-                autoDensity: false,  // Disable auto density
+                resolution: 1,
+                autoDensity: false,
                 width: parent.clientWidth,
                 height: parent.clientHeight
             });
@@ -2023,7 +2014,7 @@
                 throw new Error('PixiLabelRenderer: Failed to create PIXI Application');
             }
 
-            // Style the overlay so it sits exactly on top of the WebGL canvas
+            // Style the overlay so it sits exactly on top of the map canvas
             Object.assign(this.app.view.style, {
                 position:    'absolute',
                 left:        '0',
@@ -2037,7 +2028,7 @@
             // Insert *after* the base canvas so it is rendered on top
             parent.appendChild(this.app.view);
 
-            // Container that we'll transform instead of individual sprites
+            // Container that will be transformed instead of individual sprites
             this.container = new window.PIXI.Container();
             this.app.stage.addChild(this.container);
 
@@ -2046,7 +2037,7 @@
             this.rbush = new RBush();
             this.currentStep = 0;
                 
-            // Keep a reference to an SSCLayer (if available) for direct step calculation later
+            // Keep a reference to an SSCLayer (if available) for step calculation later
             this.sscLayer = null;
                 
             // Subscribe to step updates published by the map so that labels share the same step value
@@ -2111,8 +2102,7 @@
                         rec.anchor_geom.coordinates,
                         rec.angle || 0,
                         1.0,
-                        rec.step_value || 0,
-                        rec.fits || false
+                        rec.step_value || 0
                     );
 
                     // Add to interpolator
@@ -2124,11 +2114,11 @@
                     return label;
                 }).filter(function (label) { return label !== null; });
 
-                console.log('Created', this$1._labels.length, 'valid labels');
+                // console.log('Created', this._labels.length, 'valid labels');
                 this$1._buildSprites();
             })
             .catch(function (err) {
-                console.error('PixiLabelRenderer – failed to load labels:', err);
+                console.error('PixiLabelRenderer failed to load labels:', err);
                 this$1._labels = [];
             });
     };
@@ -2141,15 +2131,15 @@
             
         var style = new window.PIXI.TextStyle({
             fontFamily: 'Arial',
-            fontSize: 24,
-            fill: 0xFF0000,
+            fontSize: 16,
+            fill: 0x000000,
             align: 'center',
             stroke: 0xFFFFFF,
-            strokeThickness: 2,
-            dropShadow: true,
-            dropShadowColor: '#000000',
-            dropShadowBlur: 4,
-            dropShadowDistance: 2
+            strokeThickness: 1
+            // dropShadow: true,
+            // dropShadowColor: '#000000',
+            // dropShadowBlur: 4,
+            // dropShadowDistance: 2
         });
 
         this._labelSprites = [];
@@ -2172,9 +2162,8 @@
 
     PixiLabelRenderer.prototype._getLabelBounds = function _getLabelBounds (sprite, screenX, screenY) {
         var bounds = sprite.getLocalBounds();
-        var padding = 4; // Add some padding between labels
+        var padding = 2; 
             
-        // Get the sprite's rotation in radians
         var angleRad = sprite.rotation;
         var cosA = Math.cos(angleRad);
         var sinA = Math.sin(angleRad);
@@ -2220,9 +2209,7 @@
 
         // First pass: calculate bounds and sort by priority
         var labelBounds = this._labelSprites
-            // Only consider sprites that are currently visible (active); this prevents
-            // labels that should be hidden (e.g. past their step_high) from re-appearing
-            // due to the collision-resolution logic.
+            // Only consider sprites that are currently visible
             .filter(function (ref) {
                     var sprite = ref.sprite;
 
@@ -2241,9 +2228,9 @@
                     maxY: bounds.maxY,
                     label: label,
                     sprite: sprite,
-                    // Get step_high from interpolator, default to Infinity if not found
+                    // Get step_high from interpolator
                     stepHigh: this$1.interpolator.stepHighs.get(label.id) || Infinity,
-                    // Use text length as secondary priority (shorter names preferred)
+                    // Use text length as secondary priority
                     textLength: label.text.length
                 };
             })
@@ -2258,7 +2245,7 @@
 
         // Second pass: detect and resolve collisions with priority
         labelBounds.forEach(function (item) {
-            // Search for collisions, excluding the current item
+            // Search for collisions
             var searchBounds = {
                 minX: item.minX,
                 minY: item.minY,
@@ -2266,8 +2253,8 @@
                 maxY: item.maxY
             };
                 
-            var collisions = this$1.rbush.search(searchBounds)
-                .filter(function (other) { return other.id !== item.id; }); // Exclude self from collision check
+            var collisions = this$1.rbush.search(searchBounds);
+                // .filter(other => other.id !== item.id); 
 
             if (collisions.length === 0) {
                 // No collision, add to tree and show label
@@ -2280,12 +2267,12 @@
         });
     };
 
-    // ── Public API expected by Map ─────────────────────────────────────
+
     PixiLabelRenderer.prototype.setViewport = function setViewport (w, h) {
         // Update both the renderer size and the canvas size
         this.app.renderer.resize(w, h);
             
-        // Ensure the canvas size matches exactly
+        // Ensure the canvas size matches
         this.app.view.width = w;
         this.app.view.height = h;
             
@@ -2313,9 +2300,8 @@
             return; // labels not loaded yet
         }
 
-        // ---- Synchronise currentStep with the map ----
-        // Try to reuse the SSCLayer's step calculation when available. This keeps
-        // label behaviour consistent with the map rendering logic.
+        // Synchronise currentStep with the map
+        // Try to reuse the SSCLayer's step calculation when available. This keeps label behaviour consistent with the map rendering logic.
         if (this.sscLayer === null && this.map && Array.isArray(this.map.renderers)) {
             var rendererWithLayer = this.map.renderers.find(function (r) { return r.layer && typeof r.layer.getStepFromDenominator === 'function'; });
             if (rendererWithLayer) {
@@ -2327,12 +2313,9 @@
             this.currentStep = Math.max(0, this.sscLayer.getStepFromDenominator(scaleDenominator));
         }
 
-        // Fallback: if we still do not have a valid step, estimate with log2 but clamp to 0
-        if (this.currentStep === undefined || this.currentStep === null) {
-            this.currentStep = Math.max(0, Math.floor(Math.log2(scaleDenominator)));
-        }
 
-        // Fetch the up-to-date world→viewport matrix from the map
+
+        // Fetch the up-to-date world->viewport matrix from the map
         var mat = this.map.getTransform().worldViewportMatrix;
         if (!mat) {
             console.warn('PixiLabelRenderer: No transform matrix available');
@@ -2359,14 +2342,13 @@
             sprite.x = out[0];
             sprite.y = this$1.app.renderer.height - out[1];
                 
-            // Calculate rotation considering transform matrix
-            // Extract rotation from transform matrix (assuming uniform scale)
+            // Calculate rotation
             var matrixRotation = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
-            // Combine matrix rotation with label rotation and convert to clockwise
+
             sprite.rotation = (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
             sprite.alpha = interpolated.opacity;
 
-            // Initially make visible (collision detection may hide it)
+            // Initially make visible
             sprite.visible = true;
         });
 
