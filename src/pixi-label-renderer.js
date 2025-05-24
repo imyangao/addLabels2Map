@@ -322,10 +322,10 @@ export default class PixiLabelRenderer {
         const style = new window.PIXI.TextStyle({
             fontFamily: 'Arial',
             fontSize: 16,
-            fill: 0x000000,
+            fill: 0xFF0000,
             align: 'center',
             stroke: 0xFFFFFF,
-            strokeThickness: 1
+            strokeThickness: 4
             // dropShadow: true,
             // dropShadowColor: '#000000',
             // dropShadowBlur: 4,
