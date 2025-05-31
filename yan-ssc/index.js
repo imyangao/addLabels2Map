@@ -1836,10 +1836,11 @@
     }
 
     // Label class with interpolation support
-    var Label = function Label(id, text, position, rotation, opacity, step) {
+    var Label = function Label(id, text, position, rotation, opacity, step, feature_class) {
         if ( rotation === void 0 ) rotation = 0;
         if ( opacity === void 0 ) opacity = 1.0;
         if ( step === void 0 ) step = 0;
+        if ( feature_class === void 0 ) feature_class = null;
 
         this.id = id;
         this.text = text;
@@ -1847,6 +1848,7 @@
         this.rotation = rotation;
         this.opacity = opacity;
         this.step = step;
+        this.feature_class = feature_class;
     };
 
     // Label interpolator class
@@ -1918,7 +1920,8 @@
                 prevLabel.pos,
                 prevLabel.rotation,
                 1.0,
-                currentStep
+                currentStep,
+                prevLabel.feature_class
             );
         }
 
@@ -1935,7 +1938,8 @@
                 lastLabel.pos,
                 lastLabel.rotation,
                 Math.max(0, fadeFactor),
-                currentStep
+                currentStep,
+                lastLabel.feature_class
             );
         }
 
@@ -1958,7 +1962,8 @@
                 pos,
                 rotation,
                 1.0,
-                currentStep
+                currentStep,
+                prevLabel.feature_class
             );
         }
 
@@ -2102,7 +2107,8 @@
                         rec.anchor_geom.coordinates,
                         rec.angle || 0,
                         1.0,
-                        rec.step_value || 0
+                        rec.step_value || 0,
+                        rec.feature_class || null
                     );
 
                     // Add to interpolator
@@ -2129,24 +2135,65 @@
             return;
         }
             
-        var style = new window.PIXI.TextStyle({
-            fontFamily: 'Arial',
-            fontSize: 16,
-            fill: 0xFF0000,
-            align: 'center',
-            stroke: 0xFFFFFF,
-            strokeThickness: 4
-            // dropShadow: true,
-            // dropShadowColor: '#000000',
-            // dropShadowBlur: 4,
-            // dropShadowDistance: 2
-        });
+        // Define styles for different feature classes
+        var styles = {
+            road: new window.PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 16,
+                fill: 0xFF0000,  // Red
+                align: 'center',
+                stroke: 0xFFFFFF,
+                strokeThickness: 4,
+                fontWeight: 'bold'
+            }),
+            water: new window.PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 16,
+                fill: 0x0000FF,  // Blue
+                align: 'center',
+                stroke: 0xFFFFFF,
+                strokeThickness: 4,
+                fontWeight: 'bold',
+                fontStyle: 'italic'
+            }),
+            building: new window.PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 16,
+                fill: 0x008000,  // Green
+                align: 'center',
+                stroke: 0xFFFFFF,
+                strokeThickness: 4,
+                fontWeight: 'bold'
+            }),
+            default: new window.PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 16,
+                fill: 0x000000,  // Black
+                align: 'center',
+                stroke: 0xFFFFFF,
+                strokeThickness: 4,
+                fontWeight: 'bold'
+            })
+        };
 
         this._labelSprites = [];
         for (var i = 0, list = this._labels; i < list.length; i += 1) {
             var lbl = list[i];
 
                 var container = new window.PIXI.Container();
+                
+            // Determine which style to use based on feature_class
+            var style = styles.default;
+            if (lbl.feature_class !== null) {
+                if (lbl.feature_class >= 10000 && lbl.feature_class < 11000) {
+                    style = styles.road;
+                } else if (lbl.feature_class >= 12000 && lbl.feature_class < 13000) {
+                    style = styles.water;
+                } else if (lbl.feature_class >= 13000 && lbl.feature_class < 14000) {
+                    style = styles.building;
+                }
+            }
+                
             var txt = new window.PIXI.Text(lbl.text, style);
             txt.anchor.set(0.5);
             container.addChild(txt);
