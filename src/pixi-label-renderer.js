@@ -246,6 +246,86 @@ export default class PixiLabelRenderer {
             // Enable or disable collision detection
             this.collisionDetectionEnabled = true;
 
+            // Zoom idle detection and opacity animation
+            // this.previousScaleDenominator = null;
+            this.zoomIdleFrames = 0;
+            // this.zoomIdleThreshold = 30; // 30 frames ~0.5 seconds at 60fps
+            this.isZoomIdle = false; // Controls when opacity animations are allowed to run
+            this.opacityAnimationSpeed = 0.05; // Each frame, labels will fade in by 5% until reaching full opacity
+            this.labelOpacityOverrides = new Map(); // Store opacity overrides for labels
+            this.frameCount = 0; // Add frame counter
+            
+            // Zoom interaction tracking
+            this.lastZoomTime = Date.now(); // The last time the user zoomed
+            this.zoomIdleTimeout = 500; // milliseconds to wait after last zoom
+            
+            // Set up interaction listeners on the map's canvas
+            const mapCanvas = this.map.getCanvasContainer();
+            if (mapCanvas) {
+                const updateZoomTime = () => {
+                    // Refresh lastZoomTime whenever user zooms, reset idle clock
+                    this.lastZoomTime = Date.now();
+                    // If map was idle before:
+                    if (this.isZoomIdle) {
+                        console.log('Zoom interaction detected, marking zoom as active');
+                        // Clear fade-in animations
+                        this.labelOpacityOverrides.clear();
+                        // Mark map as active again
+                        this.isZoomIdle = false;
+                        // Prepare to stop animation
+                        this.zoomIdleFrames = 0;
+                    }
+                };
+                
+                // Listen for zoom-specific events
+                // Mouse wheel zoom
+                mapCanvas.addEventListener('wheel', updateZoomTime);
+                
+                // Pinch zoom detection
+                let touchStartDistance = null;
+                
+                // Remember how far apart the two fingers were at the beginning of the pinch
+                // Calculate the distance between two fingers
+                const getTouchDistance = (touches) => {
+                    if (touches.length < 2) return null;
+                    const dx = touches[0].clientX - touches[1].clientX;
+                    const dy = touches[0].clientY - touches[1].clientY;
+                    return Math.sqrt(dx * dx + dy * dy);
+                };
+                
+                // When two fingers touch, store the distance
+                mapCanvas.addEventListener('touchstart', (e) => {
+                    if (e.touches.length === 2) {
+                        touchStartDistance = getTouchDistance(e.touches);
+                    }
+                });
+                
+
+                // As the user moves fingers, check current pinch distance
+                mapCanvas.addEventListener('touchmove', (e) => {
+                    if (e.touches.length === 2 && touchStartDistance !== null) {
+                        const currentDistance = getTouchDistance(e.touches);
+                        if (currentDistance !== null) {
+                            const distanceChange = Math.abs(currentDistance - touchStartDistance);
+                            // Only count as zoom if pinch distance changed significantly
+                            if (distanceChange > 10) {
+                                updateZoomTime();
+                                touchStartDistance = currentDistance;
+                            }
+                        }
+                    }
+                });
+                
+                // When one or both fingers are lifted, stop tracking pinch distance
+                mapCanvas.addEventListener('touchend', (e) => {
+                    if (e.touches.length < 2) {
+                        touchStartDistance = null;
+                    }
+                });
+                
+                console.log('Zoom detection listeners set up successfully');
+            }
+
             // Load label data (if provided) asynchronously
             if (opts.labelUrl) {
                 console.log('Starting to load labels from:', opts.labelUrl);
@@ -533,7 +613,71 @@ export default class PixiLabelRenderer {
             this.currentStep = Math.max(0, this.sscLayer.getStepFromDenominator(scaleDenominator));
         }
 
-
+        // Check if zoom has been idle based on zoom time
+        // this.lastZoomTime was updated via mouse/touch events
+        const timeSinceLastZoom = Date.now() - this.lastZoomTime;
+        const isZoomIdleNow = timeSinceLastZoom > this.zoomIdleTimeout;
+        
+        // Log zoom status periodically
+        // Every 60 frames(~1 sec), print debug info
+        if (this.frameCount % 60 === 0) {
+            console.log('Zoom status:', {
+                timeSinceLastZoom,
+                isZoomIdleNow,
+                isZoomIdle: this.isZoomIdle,
+                currentStep: this.currentStep
+            });
+            
+            // Also log opacity override status
+            if (this.labelOpacityOverrides.size > 0) {
+                const overrides = Array.from(this.labelOpacityOverrides.entries()).map(([id, opacity]) => ({
+                    id,
+                    opacity: opacity.toFixed(3)
+                }));
+                console.log('Active opacity overrides:', overrides);
+            }
+        }
+        
+        // Update zoom idle state based on zoom interaction
+        if (isZoomIdleNow && !this.isZoomIdle) {
+            this.isZoomIdle = true;
+            console.log('Zoom is idle! Starting label opacity animations');
+            
+            // Count and list labels with partial opacity
+            let partialOpacityCount = 0;
+            let partialOpacityLabels = [];
+            this._labelSprites.forEach(({ label }) => {
+                const interpolated = this.interpolator.getInterpolatedLabel(label.id, this.currentStep);
+                if (interpolated && interpolated.opacity < 1.0) {
+                    partialOpacityCount++;
+                    partialOpacityLabels.push({
+                        id: label.id,
+                        text: label.text,
+                        opacity: interpolated.opacity.toFixed(3)
+                    });
+                }
+            });
+            
+            if (partialOpacityCount > 0) {
+                console.log(`Found ${partialOpacityCount} labels to animate:`, partialOpacityLabels);
+            } else {
+                console.log('No labels with partial opacity found at current zoom level');
+            }
+        } else if (!isZoomIdleNow && this.isZoomIdle) {
+            // Zoom just became active
+            this.isZoomIdle = false;
+            console.log('Zoom active! Resetting label opacities');
+            this.labelOpacityOverrides.clear();
+            // Reset all label opacities to their interpolated values
+            this._labelSprites.forEach(({ label, sprite }) => {
+                const interpolated = this.interpolator.getInterpolatedLabel(label.id, this.currentStep);
+                if (interpolated) {
+                    sprite.alpha = interpolated.opacity;
+                }
+            });
+        }
+        
+        this.frameCount++;
 
         // Fetch the up-to-date world->viewport matrix from the map
         const mat = this.map.getTransform().worldViewportMatrix;
@@ -563,7 +707,43 @@ export default class PixiLabelRenderer {
             const matrixRotation = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
 
             sprite.rotation = (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
-            sprite.alpha = interpolated.opacity;
+            
+            // Check if we have an opacity override first (from previous idle animation)
+            // If label is already in the middle of animation
+            if (this.labelOpacityOverrides.has(label.id)) {
+                // Use the override opacity (which persists during panning)
+                sprite.alpha = this.labelOpacityOverrides.get(label.id);
+                
+                // Continue animating if zoom is still idle and not yet fully opaque
+                if (this.isZoomIdle && sprite.alpha < 1.0) {
+                    const newOpacity = Math.min(1.0, sprite.alpha + this.opacityAnimationSpeed);
+                    this.labelOpacityOverrides.set(label.id, newOpacity);
+                    sprite.alpha = newOpacity;
+                    
+                    if (newOpacity >= 1.0) {
+                        console.log(`Opacity animation completed for label ${label.id}:`, label.text);
+                    }
+                }
+            } else {
+                // No override, use interpolated opacity
+                sprite.alpha = interpolated.opacity;
+                
+                // Start animation if zoom is idle and opacity < 1
+                if (this.isZoomIdle && interpolated.opacity < 1.0) {
+                    // Add it to labelOpacityOverrides to it will be animated in the next frame
+                    this.labelOpacityOverrides.set(label.id, interpolated.opacity);
+                    console.log(`Starting opacity animation for label ${label.id}:`, {
+                        text: label.text,
+                        startOpacity: interpolated.opacity
+                    });
+                }
+            }
+            
+            // Clear overrides only when zoom becomes active again
+            if (!this.isZoomIdle && this.labelOpacityOverrides.size > 0) {
+                console.log('Clearing opacity overrides due to zoom activity');
+                this.labelOpacityOverrides.clear();
+            }
 
             // Initially make visible
             sprite.visible = true;
