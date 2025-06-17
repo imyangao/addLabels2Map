@@ -2,7 +2,7 @@
 
 This project builds upon the original [sscview-js](https://github.com/bmmeijers/sscview-js/tree/develop) by [Martijn Meijers](https://github.com/bmmeijers), and is developed as part of my master thesis on **labeling vario-scale maps**.
 
-The main logic for label rendering, such as combining labels with the underlying maps, interpolating of labels and rendering text, is implemented in [`pixi-label-renderer.js`](./src/pixi-label-renderer.js).
+The main logic for label rendering, such as combining labels with the underlying maps, interpolation labels and text rendering, is implemented in [`pixi-label-renderer.js`](./src/pixi-label-renderer.js).
 
 ### Usage Example
 
