@@ -136,7 +136,7 @@ class Map {
             // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "Actueel_orthoHR", true),
             // new WMTSRenderer(this.getWebGLContext(), this.msgbus, "brtachtergrondkaart", false),
             new SSCRenderer(this.getWebGLContext(), this.msgbus, sscLayer),
-            new PixiLabelRenderer(this, this.msgbus, { labelUrl: 'label_test/label_anchors.json' }),
+            new PixiLabelRenderer(this, this.msgbus, { labelUrl: 'label_test/label_anchors_event.json' }),
 
 
         ]

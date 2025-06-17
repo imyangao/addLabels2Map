@@ -428,7 +428,7 @@ export default class PixiLabelRenderer {
             building: new window.PIXI.TextStyle({
                 fontFamily: 'Arial',
                 fontSize: 16,
-                fill: 0x008000,  // Green
+                fill: 0x000000,  // Black
                 align: 'center',
                 stroke: 0xFFFFFF,
                 strokeThickness: 4,
@@ -706,7 +706,11 @@ export default class PixiLabelRenderer {
             // Calculate rotation
             const matrixRotation = Math.atan2(mat[1], mat[0]) * (180 / Math.PI);
 
-            sprite.rotation = (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
+            // Check if this is a building label (feature_class between 13000 and 14000)
+            const isBuilding = label.feature_class >= 13000 && label.feature_class < 14000;
+            
+            // Set rotation to 0 for buildings, otherwise use the original rotation
+            sprite.rotation = isBuilding ? 0 : (-(interpolated.rotation + matrixRotation)) * (Math.PI / 180);
             
             // Check if we have an opacity override first (from previous idle animation)
             // If label is already in the middle of animation
