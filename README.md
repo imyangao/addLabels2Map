@@ -14,5 +14,6 @@ import PixiLabelRenderer from './pixi-label-renderer.js';
 new PixiLabelRenderer(this, this.msgbus, {
     labelUrl: 'label_test/label_anchors.json'
 });
+```
 
 This implementation supports interactive visualization of how labels move over scale in vario-scale mapping systems, and forms an improtant component of my thesis research.
